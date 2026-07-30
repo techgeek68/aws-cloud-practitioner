@@ -1,0 +1,1574 @@
+# Chapter 11: Storage
+
+---
+
+## 11.1 The AWS Storage Portfolio
+
+| Type | What it is | AWS services | Choose it when |
+| --- | --- | --- | --- |
+| Block | Raw volumes attached to one instance, formatted with a file system | Amazon EBS, instance store | A single instance needs a disk, such as a boot volume or a database |
+| File | A shared file system many clients mount at once | Amazon EFS, Amazon FSx | Several instances need the same files simultaneously |
+| Object | Flat storage of whole objects addressed by key | Amazon S3 | Backups, static assets, data lakes, anything reached over HTTP |
+
+The decision rule in one line: **one instance needs a disk, use block; many instances need the same files, use file; anything else, use object.**
+
+---
+
+## 11.2 Amazon EBS
+
+Block-level volumes for EC2 instances. Volumes are persistent, independently configurable, and automatically replicated within their Availability Zone to protect against hardware failure.
+
+### 11.2.1 Volume Types
+
+EBS splits into SSD-backed volumes for IOPS-intensive work and HDD-backed volumes for throughput-intensive work.
+
+- **IOPS** counts read and write operations per second, and matters for random access such as databases.
+- **Throughput** measures data transferred per second, and matters for large sequential reads such as log processing.
+
+| Type | Generation | Max size | Max IOPS per volume | Max throughput per volume | Use |
+| --- | --- | --- | --- | --- | --- |
+| General Purpose SSD (gp3) | Current | 64 TiB | 80,000 | 2,000 MiB/s | Most workloads, boot volumes, development and test, virtual desktops |
+| General Purpose SSD (gp2) | Previous | 16 TiB | 16,000 | 250 MiB/s | General workloads, superseded by gp3 |
+| Provisioned IOPS SSD (io2 Block Express) | Current | 64 TiB | 256,000 | 4,000 MiB/s | Mission-critical applications, large databases, sub-millisecond latency |
+| Provisioned IOPS SSD (io1) | Previous | 16 TiB | 64,000 | 1,000 MiB/s | High performance databases, superseded by io2 |
+| Throughput Optimized HDD (st1) | Current | 16 TiB | 500 | 500 MiB/s | Big data, streaming, log processing. Cannot be a boot volume |
+| Cold HDD (sc1) | Current | 16 TiB | 250 | 250 MiB/s | Infrequently accessed data, lowest HDD cost. Cannot be a boot volume |
+
+What changed between generations:
+
+- **gp3** provides a baseline of 3,000 IOPS and 125 MiB/s at any volume size, and lets IOPS and throughput be provisioned independently of capacity. It is cheaper per GB than gp2, so gp2 is rarely the right answer for new work.
+- **io2 Block Express** raises the ceiling to 256,000 IOPS, 4,000 MiB/s, and 64 TiB per volume on Nitro-based instances, with higher durability than io1.
+
+### 11.2.2 Features
+
+- **Snapshots.** Point-in-time backups stored in Amazon S3, incremental after the first. Used for backup, for creating new volumes, and for copying data between Regions.
+- **Encryption.** Available at no additional cost using AWS KMS keys, covering data at rest, data in transit between instance and volume, and snapshots.
+- **Elastic Volumes.** Change size, volume type, IOPS, or throughput without detaching the volume or stopping the instance.
+- **Persistence.** Volumes outlive the instance unless the delete-on-termination flag is set, which it is by default for root volumes.
+- **Multi-Attach.** io1 and io2 volumes can attach to several instances at once within one Availability Zone, for clustered applications that manage their own concurrency.
+
+### 11.2.3 Pricing
+
+- Billed per provisioned GB-month, whether or not the volume is attached or the data is used.
+- Additional IOPS and throughput on gp3 are billed above the included baseline.
+- Snapshots are billed per GB-month of data stored.
+- Inbound data transfer is free; cross-Region snapshot copies are charged.
+
+The habit worth forming: an unattached volume costs exactly the same as an attached one. Deleting orphaned volumes is one of the easiest savings available.
+
+---
+
+## 11.3 Amazon S3
+
+Object storage with effectively unlimited capacity. Data is stored as objects inside buckets, each identified by a key.
+
+- Designed for 99.999999999% durability, commonly written as eleven nines.
+- Access is controlled by IAM policies, bucket policies, and, on older buckets, ACLs.
+- Objects up to 5 GB can be uploaded in a single PUT. Larger objects require multipart upload.
+- The maximum object size is **50 TB**, raised from 5 TB on December 2, 2025. It applies across all storage classes and all Regions except AWS GovCloud (US).
+
+**Bucket URL formats**
+
+- Virtual hosted style: `https://{bucket-name}.s3.{region}.amazonaws.com`
+- Path style: `https://s3.{region}.amazonaws.com/{bucket-name}`
+
+**Consistency.** S3 provides strong read-after-write consistency for PUT and DELETE of objects in all Regions. A read following a write returns the latest version, with no need to design around eventual consistency.
+
+**Common uses**
+
+- Application assets such as images, video, and static files.
+- Static website hosting.
+- Backup and disaster recovery.
+- Data lake and analytics staging.
+
+**Pricing**
+
+- Per GB-month stored, varying by storage class.
+- Per request, with PUT, COPY, POST, and LIST charged at a different rate from GET.
+- Outbound data transfer to the internet is charged. Inbound transfer is free, as is transfer to CloudFront or to EC2 in the same Region.
+- Retrieval charges apply to the infrequent access and archive classes.
+
+---
+
+## 11.4 S3 Storage Classes
+
+This section owns the class definitions. Selecting between them under cost and performance constraints is covered in section 18.2.
+
+| Class | Availability Zones | Retrieval | Intended access pattern |
+| --- | --- | --- | --- |
+| S3 Standard | 3 or more | Milliseconds | Frequently accessed data |
+| S3 Express One Zone | 1 | Single-digit milliseconds, fastest | Latency-critical workloads tolerant of single-zone risk |
+| S3 Intelligent-Tiering | 3 or more | Milliseconds in the frequent and infrequent tiers | Unknown or changing access patterns; no retrieval charges |
+| S3 Standard-Infrequent Access | 3 or more | Milliseconds | Accessed less often but needed quickly |
+| S3 One Zone-Infrequent Access | 1 | Milliseconds | Reproducible data accessed infrequently |
+| S3 Glacier Instant Retrieval | 3 or more | Milliseconds | Archives accessed roughly once a quarter |
+| S3 Glacier Flexible Retrieval | 3 or more | Minutes to hours | Backups and disaster recovery copies |
+| S3 Glacier Deep Archive | 3 or more | Hours | Long-term compliance retention, tape replacement |
+
+Two traps worth naming:
+
+- **Single-zone classes do not survive the loss of that zone.** S3 One Zone-IA and S3 Express One Zone are appropriate only for data that can be regenerated or that exists elsewhere.
+- **The infrequent access classes have a minimum billable storage duration and a per-GB retrieval charge.** Moving frequently read data into them raises the bill rather than lowering it.
+
+---
+
+## 11.5 S3 Data Management
+
+- **Versioning.** Keeps every version of an object in the same bucket, so overwrites and deletions are recoverable. A delete on a versioned bucket writes a delete marker rather than removing data. Once enabled, versioning can be suspended but never switched off.
+- **Lifecycle policies.** Rules that transition objects between storage classes or expire them after a set age. They can also clean up incomplete multipart uploads, which otherwise accumulate as invisible charges.
+- **Replication.** Copies objects to another bucket, either cross-Region or same-Region. Versioning must be enabled on both buckets, and replication applies only to objects written after the rule is created unless batch replication is used.
+- **Object Lock.** Write-once-read-many retention that prevents deletion or overwrite for a defined period. It must be enabled at bucket creation and cannot be added later.
+- **Access points.** Named endpoints with their own policies, so different applications reach one bucket through separately governed doors rather than one large bucket policy.
+
+---
+
+## 11.6 S3 Glacier Storage Classes
+
+Three classes for long-term archiving, all with eleven nines of durability and encryption in transit and at rest by default.
+
+| Class | Retrieval options | Best for |
+| --- | --- | --- |
+| S3 Glacier Instant Retrieval | Milliseconds | Rarely accessed archives that occasionally need immediate access, such as medical imaging or news assets |
+| S3 Glacier Flexible Retrieval | Expedited in 1 to 5 minutes, Standard in 3 to 5 hours, Bulk in 5 to 12 hours and free of retrieval charge | Backups and disaster recovery copies retrieved once or twice a year |
+| S3 Glacier Deep Archive | Standard within 12 hours, Bulk up to 48 hours | Compliance archives and tape library replacement, the lowest storage cost in AWS |
+
+**Naming note.** What used to be called simply "Amazon S3 Glacier" is now **S3 Glacier Flexible Retrieval**. Older material using the bare name is referring to that class.
+
+**Vault Lock** enforces compliance controls such as write-once-read-many that cannot be overridden once locked, including by the account root user.
+
+Typical uses are media archives, healthcare records, regulatory retention, scientific data, and digital preservation.
+
+---
+
+## 11.7 Amazon EFS
+
+A fully managed, elastic, shared file system for AWS compute. It grows and shrinks automatically as files are added and removed, with no capacity to provision.
+
+- Supports **NFS v4.0 and v4.1**, with v4.1 recommended.
+- Accessible from Amazon EC2, ECS, EKS, Lambda, and Fargate, and from on-premises servers over Direct Connect or Site-to-Site VPN.
+- **Does not support Windows EC2 instances.** Windows shared storage is Amazon FSx for Windows File Server.
+- **Regional** file systems replicate across multiple Availability Zones. **One Zone** file systems store data in a single zone at lower cost and lower resilience.
+- **Mount targets** provide the NFS endpoint in each subnet, protected by a security group on port 2049.
+
+**Order of work:** create the compute, create the file system, create mount targets in the required subnets, then mount using NFS v4.1.
+
+Its strengths are concurrent access from thousands of clients and paying only for stored data. Its weakness relative to EBS is per-operation latency, so it is a poor fit for a database's data files.
+
+---
+
+## 11.8 Amazon FSx
+
+Managed third-party file systems, for cases where a specific protocol or feature set is required.
+
+- **FSx for Windows File Server.** SMB protocol, Active Directory integration, and Windows ACLs. The answer whenever a Windows workload needs shared storage.
+- **FSx for Lustre.** High performance computing and machine learning, with the ability to link to an S3 bucket and present its objects as files.
+- **FSx for NetApp ONTAP.** Multi-protocol NFS, SMB, and iSCSI with ONTAP features such as snapshots and deduplication.
+- **FSx for OpenZFS.** NFS with ZFS snapshots and cloning.
+
+---
+
+## 11.9 Hybrid and Transfer Services
+
+- **AWS Storage Gateway.** Presents AWS storage to on-premises systems, as a file share, a virtual tape library, or an iSCSI volume, with local caching.
+- **AWS DataSync.** Automated, accelerated online transfer between on-premises storage, other clouds, and AWS storage services.
+- **AWS Transfer Family.** Managed SFTP, FTPS, and FTP endpoints in front of S3 and EFS, so existing file transfer clients work unchanged.
+- **AWS Snow Family.** Physical transfer devices. As of November 7, 2025, Snowball Edge is available to existing customers only, Snowcone is discontinued, and Snowmobile is retired, as noted in section 1.6.6.
+
+---
+
+## 11.10 Storage Case Studies
+
+**An analytics company** processes billions of customer events daily through API Gateway, Kinesis, Lambda, ECS, and Data Firehose. The storage answer is **Amazon S3**, which provides durable, scalable object storage for high-volume event data and serves as the data lake staging layer.
+
+**A media company** needs shared access to project files from dozens of render nodes at once. The answer is **Amazon EFS**, because many instances need the same files simultaneously, which block storage cannot provide.
+
+**A financial services firm** must retain trade records for seven years, unaltered, with retrieval expected only during an audit. The answer is **S3 Glacier Deep Archive with Object Lock**, giving the lowest storage cost and enforceable write-once-read-many retention.
+
+**A relational database on EC2** needs consistent low-latency random reads and writes. The answer is **EBS io2 Block Express**, since only provisioned IOPS block storage delivers predictable sub-millisecond latency.
+
+---
+
+## 11.11 Lab: Amazon EBS
+
+**What you will build**
+
+```
+EC2 Instance (EBSLab)
+|
+|-- Root Volume       /dev/xvda1   8 GiB   created with the instance
+|
+|-- My Volume         /dev/xvdf    2 GiB   created in step 2
+|
+|-- My Snapshot                            created in step 6
+|
+|-- Restored Volume   /dev/xvdg    2 GiB   created in step 8
+```
+
+### 11.11.1 Step 1: Launch the Instance
+
+1. Open the **EC2** console and confirm the Region selector shows the Region you intend to use.
+2. Choose **Instances**, then **Launch instances**.
+3. In **Name**, enter `EBSLab`.
+4. Under **Application and OS Images**, select the latest **Amazon Linux 2023** AMI.
+5. Set **Instance type** to `t2.micro`.
+6. Under **Key pair (login)**, create a new key pair or select an existing one.
+7. Next to **Network settings**, choose **Edit**.
+8. Set **VPC** to the default VPC and leave **Subnet** at no preference.
+9. Set **Auto-assign public IP** to **Enable**.
+10. Under **Firewall**, choose **Create security group**.
+11. Add an inbound rule for **SSH** on port 22 with source **My IP**. The source notes used `0.0.0.0/0` here, which exposes the instance to the whole internet and should not be copied.
+12. Add an inbound rule for **HTTP** on port 80 with source **Anywhere-IPv4**.
+13. Leave **Storage** at the default 8 GiB root volume.
+14. Choose **Launch instance**.
+15. Wait until the instance state shows **Running**.
+
+![EC2 instance list showing the EBSLab instance running](https://github.com/user-attachments/assets/f075d321-e4d5-48a5-8f0b-dcea7e2120b4)
+
+16. Open the instance details and note the **Availability Zone**, for example `us-east-1b`. A volume can only attach to an instance in the same zone, so this value is needed in the next step.
+
+### 11.11.2 Step 2: Create a Volume
+
+1. In the EC2 console, choose **Volumes** under **Elastic Block Store**.
+2. Choose **Create volume**.
+3. Set **Volume type** to **General Purpose SSD (gp3)**.
+4. Set **Size** to `2` GiB.
+5. Set **Availability Zone** to the zone noted in step 1.
+6. Add a tag with key `Name` and value `My Volume`.
+7. Choose **Create volume**.
+8. Confirm the volume state shows **Available**.
+
+![EBS volumes list showing the newly created 2 GiB volume](https://github.com/user-attachments/assets/2723ce7e-e4e2-44f3-8ef4-0e4c22f6b1d5)
+
+### 11.11.3 Step 3: Attach the Volume
+
+1. Under **Elastic Block Store**, choose **Volumes**.
+2. Select **My Volume**.
+3. Choose **Actions**, then **Attach volume**.
+4. In **Instance**, select the `EBSLab` instance.
+5. Set **Device name** to `/dev/sdf`.
+6. Choose **Attach volume**.
+7. Confirm the volume state changes to **In-use**.
+
+![EBS volume attached to the EBSLab instance](https://github.com/user-attachments/assets/34a20701-17c5-4264-aab3-da148368540c)
+
+Note that Linux may present the device under a different name than the one requested. A volume attached as `/dev/sdf` commonly appears as `/dev/xvdf`, which is the name used in the commands below.
+
+### 11.11.4 Step 4: Connect to the Instance
+
+1. Locate the `.pem` key file downloaded when the key pair was created.
+2. Restrict the key file permissions.
+   - macOS or Linux:
+     ```bash
+     chmod 400 MyLabKey.pem
+     ```
+   - Windows PowerShell:
+     ```powershell
+     icacls "MyLabKey.pem" /inheritance:r
+     icacls "MyLabKey.pem" /grant:r "$($env:USERNAME):R"
+     ```
+3. Copy the instance's **Public IPv4 address** from the EC2 console.
+4. Connect over SSH.
+   ```bash
+   ssh -i "MyLabKey.pem" ec2-user@<your-instance-public-ip>
+   ```
+5. Type `yes` at the host fingerprint prompt.
+
+### 11.11.5 Step 5: Format and Mount the Volume
+
+1. List the block devices attached to the instance.
+   ```bash
+   lsblk
+   ```
+2. Confirm `xvdf` appears with a size of 2 GiB and no mount point.
+
+![lsblk output showing the attached but unmounted volume](https://github.com/user-attachments/assets/cfe6d26e-d247-4fca-8b40-bcd10a7437dd)
+
+3. Check the mounted file systems and free space.
+   ```bash
+   df -h
+   ```
+4. Confirm the new volume does not appear, because it has no file system yet.
+
+![df output showing the new volume is not mounted](https://github.com/user-attachments/assets/277a49f6-8f8b-4bd0-97de-64f08f868143)
+
+5. Create a file system on the volume.
+   ```bash
+   sudo mkfs -t ext3 /dev/xvdf
+   ```
+
+![mkfs output creating the file system on the volume](https://github.com/user-attachments/assets/fd7bc02a-6ff2-4c7d-bb9d-5b63fa3524ad)
+
+   This lab uses ext3 to match the output shown. For new work, ext4 or xfs is the current default on Amazon Linux 2023 and should be preferred.
+
+6. Create a mount point.
+   ```bash
+   sudo mkdir -p /mnt/data-store
+   ```
+7. Mount the volume.
+   ```bash
+   sudo mount /dev/xvdf /mnt/data-store
+   ```
+8. Confirm the mount.
+   ```bash
+   lsblk
+   ```
+
+![lsblk output showing the volume mounted at /mnt/data-store](https://github.com/user-attachments/assets/8cb557f6-4d6b-48d3-b7d2-eb2887a1123a)
+
+9. Add an entry so the volume mounts automatically after a reboot.
+   ```bash
+   echo "/dev/xvdf   /mnt/data-store   ext3   defaults,noatime   1   2" | sudo tee -a /etc/fstab
+   ```
+10. Verify the file.
+    ```bash
+    sudo cat /etc/fstab
+    ```
+
+![fstab contents showing the new mount entry](https://github.com/user-attachments/assets/60d1371d-65c1-43f5-8df3-838c80d8e4d4)
+
+    Device names such as `/dev/xvdf` are not guaranteed to be stable across reboots when several volumes are attached. In production, reference the volume by UUID, which `sudo blkid` will show.
+
+11. Write a test file.
+    ```bash
+    sudo sh -c "echo 'Cloud Engineer' >> /mnt/data-store/file.txt"
+    ```
+12. Confirm the file exists and read it back.
+    ```bash
+    ls /mnt/data-store/
+    cat /mnt/data-store/file.txt
+    ```
+
+![Test file created and read back from the mounted volume](https://github.com/user-attachments/assets/c597bc55-f759-4cfd-9127-b0c239e7ad27)
+
+### 11.11.6 Step 6: Create a Snapshot
+
+1. In the EC2 console, choose **Volumes** under **Elastic Block Store**.
+2. Select **My Volume**.
+3. Choose **Actions**, then **Create snapshot**.
+4. In **Description**, enter `My Snapshot backup`.
+5. Add a tag with key `Name` and value `My Snapshot`.
+6. Choose **Create snapshot**.
+7. Choose **Snapshots** under **Elastic Block Store**.
+8. Wait until the snapshot status shows **Completed**.
+
+![Snapshot list showing the completed snapshot](https://github.com/user-attachments/assets/babc4c4e-f358-44b0-bfe8-0588f748941c)
+
+### 11.11.7 Step 7: Delete the Test File
+
+1. In the SSH session, delete the file.
+   ```bash
+   sudo rm /mnt/data-store/file.txt
+   ```
+2. Confirm the directory is now empty.
+   ```bash
+   ls /mnt/data-store/
+   ```
+
+### 11.11.8 Step 8: Restore from the Snapshot
+
+1. In the EC2 console, choose **Snapshots** under **Elastic Block Store**.
+2. Select **My Snapshot**.
+3. Choose **Actions**, then **Create volume from snapshot**.
+4. Set **Availability Zone** to the same zone as the instance.
+5. Add a tag with key `Name` and value `Restored Volume`.
+6. Choose **Create volume**.
+7. Wait until the state shows **Available**.
+8. Choose **Volumes**, then select **Restored Volume**.
+9. Choose **Actions**, then **Attach volume**.
+10. Select the `EBSLab` instance.
+11. Set **Device name** to `/dev/sdg`.
+12. Choose **Attach volume**.
+
+![Restored volume attached to the instance as a second device](https://github.com/user-attachments/assets/ea098ffb-eca9-472a-9e85-0cd025d7a030)
+
+13. In the SSH session, create a second mount point.
+    ```bash
+    sudo mkdir -p /mnt/data-store2
+    ```
+14. Mount the restored volume.
+    ```bash
+    sudo mount /dev/xvdg /mnt/data-store2
+    ```
+15. List its contents.
+    ```bash
+    ls /mnt/data-store2/
+    ```
+16. Read the recovered file.
+    ```bash
+    cat /mnt/data-store2/file.txt
+    ```
+17. Confirm the file deleted in step 7 is present, because the snapshot captured the volume before the deletion.
+
+![Recovered file listed on the restored volume](https://github.com/user-attachments/assets/01fd9da9-5e9f-4d1c-8b74-4fc964b260de)
+
+![Contents of the recovered file read from the restored volume](https://github.com/user-attachments/assets/e8bc683b-ab33-43d8-b30d-2506c57ac2c3)
+
+### 11.11.9 Cleanup
+
+1. Remove the fstab entry added in step 5, or the instance will fail to boot cleanly once the volume is gone.
+   ```bash
+   sudo sed -i '\|/mnt/data-store|d' /etc/fstab
+   ```
+2. Unmount both volumes.
+   ```bash
+   sudo umount /mnt/data-store
+   sudo umount /mnt/data-store2
+   ```
+3. In the EC2 console, choose **Volumes**, select **My Volume**, then **Actions**, then **Detach volume**.
+4. Repeat for **Restored Volume**.
+5. Once both show **Available**, select each and choose **Actions**, then **Delete volume**.
+6. Choose **Snapshots**, select **My Snapshot**, then **Actions**, then **Delete snapshot**.
+7. Choose **Instances**, select `EBSLab`, then **Instance state**, then **Terminate instance**.
+8. Confirm the root volume was deleted with the instance.
+
+---
+
+## 11.12 Lab: Amazon S3
+
+This lab covers eleven areas of S3 in sequence. It is long, so work through it in order; later parts depend on earlier ones, particularly versioning, which cross-Region replication requires.
+
+**Naming.** Replace `[yourname]` throughout with something that makes your bucket names globally unique.
+
+**Buckets created**
+
+| Bucket | Region | Purpose |
+| --- | --- | --- |
+| `s3-main-lab-[yourname]` | `us-east-1` | The primary working bucket |
+| `s3-logs-[yourname]` | `us-east-1` | Destination for server access logs |
+| `s3-replica-[yourname]` | `us-west-2` | Destination for cross-Region replication |
+| `s3-locked-[yourname]` | `us-east-1` | Created later, with Object Lock enabled |
+
+### 11.12.1 Part 1: Create the Buckets
+
+1. Sign in to the console and open the **S3** service.
+2. Choose **Create bucket**.
+3. Set **Bucket name** to `s3-main-lab-[yourname]`.
+4. Set **Region** to **US East (N. Virginia)**.
+5. Leave **Object Ownership** as **ACLs disabled (recommended)**.
+6. Leave **Block all public access** enabled.
+7. Choose **Create bucket**.
+
+![S3 console showing the created main lab bucket](https://github.com/user-attachments/assets/e4535369-0f9b-4865-a915-f595cb131f9d)
+
+8. Choose **Create bucket** again.
+9. Set **Bucket name** to `s3-logs-[yourname]` in **US East (N. Virginia)**, leaving the defaults.
+10. Choose **Create bucket**.
+11. Choose **Create bucket** a third time.
+12. Set **Bucket name** to `s3-replica-[yourname]` and set **Region** to **US West (Oregon)**.
+13. Choose **Create bucket**.
+
+![S3 bucket list showing all three buckets](https://github.com/user-attachments/assets/77f69026-5ef2-4ccb-8e87-46ac4bfef8d6)
+
+### 11.12.2 Part 2: Upload Objects and Organize with Folders
+
+1. Open `s3-main-lab-[yourname]`.
+2. Choose **Create folder**.
+3. Enter `images` and choose **Create folder**.
+4. Choose **Create folder** again, enter `documents`, and choose **Create folder**.
+
+![Bucket showing the images and documents folders](https://github.com/user-attachments/assets/1fbc3e92-503d-47df-9c74-b56dc28ac6e4)
+
+   S3 has no real directories. A folder is a naming convention using `/` in the object key, which the console displays as a hierarchy.
+
+5. Open the `images/` folder.
+6. Choose **Upload**, then **Add files**.
+7. Select any image file and choose **Upload**.
+8. Return to the bucket root and open `documents/`.
+9. Choose **Upload**, then **Add files**, select a text or PDF file, and choose **Upload**.
+10. Return to the bucket root.
+11. Choose **Upload**, then **Add files**, select any small file, and choose **Upload**.
+12. Choose any uploaded object to open its details.
+13. Choose the **Object URL** and confirm access is denied. The bucket is private, so an unauthenticated request fails.
+
+![Access denied response when opening the object URL directly](https://github.com/user-attachments/assets/3e2994cf-5f48-4d34-bb63-cd519c4b4bb1)
+
+14. Choose **Download** from the object details page and confirm the file downloads, because this request uses your authenticated session.
+
+![Object downloading successfully through the authenticated console session](https://github.com/user-attachments/assets/bdb03810-1166-4de9-a4d4-265aec43e934)
+
+15. Select an object and choose **Actions**, then **Share with a presigned URL**.
+16. Set the expiry to **10 minutes**.
+17. Choose **Create presigned URL** and copy it.
+
+![Presigned URL creation dialog](https://github.com/user-attachments/assets/1919d3dd-fb50-466f-ba08-cb93b1d47dd7)
+
+18. Open the URL in a private browser window and confirm the object loads without signing in.
+
+![Object opened successfully through the presigned URL](https://github.com/user-attachments/assets/6d8ff145-e6e6-48c5-9e32-11fad9cb12c3)
+
+![Presigned URL expiry behavior](https://github.com/user-attachments/assets/8ac51f4a-b220-4a0c-b830-f8d90d31e025)
+
+   A presigned URL carries the signature of the identity that created it and grants access for a limited time without changing any bucket policy. It is the correct way to share a private object with someone who has no AWS credentials.
+
+### 11.12.3 Part 3: Permissions
+
+1. Open `s3-main-lab-[yourname]` and choose the **Permissions** tab.
+2. Review **Block public access (bucket settings)** and confirm all four options are enabled.
+
+![Block public access settings with all four options enabled](https://github.com/user-attachments/assets/4fc4546c-ba47-4946-b057-fed6f93ac584)
+
+3. Scroll to **Bucket policy** and choose **Edit**.
+4. Paste the following policy, replacing the bucket name.
+
+   ```json
+   {
+     "Version": "2012-10-17",
+     "Statement": [
+       {
+         "Sid": "DenyUnEncryptedTransport",
+         "Effect": "Deny",
+         "Principal": "*",
+         "Action": "s3:*",
+         "Resource": [
+           "arn:aws:s3:::s3-main-lab-[yourname]",
+           "arn:aws:s3:::s3-main-lab-[yourname]/*"
+         ],
+         "Condition": {
+           "Bool": { "aws:SecureTransport": "false" }
+         }
+       }
+     ]
+   }
+   ```
+
+5. Choose **Save changes**.
+
+![Bucket policy saved on the Permissions tab](https://github.com/user-attachments/assets/91523032-f4d3-480c-a679-2b4b8b51c07d)
+
+   This denies any request that does not arrive over TLS. It is a deny statement, so it overrides every allow, including one granted by an IAM policy.
+
+### 11.12.4 Part 4: Versioning
+
+1. Open `s3-main-lab-[yourname]` and choose the **Properties** tab.
+2. Scroll to **Bucket Versioning** and choose **Edit**.
+3. Select **Enable** and choose **Save changes**.
+4. On your computer, create a text file named `notes.txt` containing `Version 1`.
+5. Upload `notes.txt` to the bucket root.
+6. Edit the local file so it contains `Version 2`.
+7. Upload `notes.txt` again, with the same name to the same location.
+
+![Object list showing notes.txt after the second upload](https://github.com/user-attachments/assets/c6f31eaa-05ca-443d-a5c4-f9f1fdd74ccd)
+
+![Version history for the notes.txt object](https://github.com/user-attachments/assets/0c53c555-fd57-4838-a257-8e59b2256c8f)
+
+8. Turn on the **Show versions** toggle at the top right of the object list.
+9. Confirm two entries for `notes.txt`, each with its own version ID and timestamp.
+10. Choose the older version and choose **Download** to confirm it still contains `Version 1`.
+11. Turn **Show versions** off, select `notes.txt`, and choose **Delete**.
+12. Turn **Show versions** back on and confirm the object still exists with its versions, now topped by a delete marker.
+13. To remove the data permanently, delete each version and the delete marker individually.
+
+    This is the behavior that makes versioning a defense against accidental deletion and against ransomware: a normal delete removes nothing.
+
+### 11.12.5 Part 5: Lifecycle Policies
+
+![Storage class comparison used when configuring the lifecycle rule](https://github.com/user-attachments/assets/b4081285-a2a8-4ac5-8e8f-a9bfc3a0b7fa)
+
+1. Open `s3-main-lab-[yourname]` and choose the **Management** tab.
+2. Choose **Create lifecycle rule**.
+3. Set **Lifecycle rule name** to `archive-old-objects`.
+4. Select **Apply to all objects in the bucket** and acknowledge the warning.
+5. Under **Lifecycle rule actions**, select **Transition current versions of objects between storage classes**.
+6. Add a transition to **Standard-IA** after `30` days.
+7. Add a transition to **Glacier Flexible Retrieval** after `90` days.
+8. Choose **Create rule**.
+9. Choose **Create lifecycle rule** again.
+10. Set the name to `cleanup-incomplete-uploads`.
+11. Select **Apply to all objects in the bucket**.
+12. Select **Delete expired object delete markers or incomplete multipart uploads**.
+13. Check **Delete incomplete multipart uploads** and set it to `7` days.
+14. Choose **Create rule**.
+
+    Incomplete multipart uploads are billed as stored data but are invisible in the object list. This second rule is one of the highest-value housekeeping settings in S3.
+
+### 11.12.6 Part 6: Static Website Hosting
+
+1. Create two files locally.
+
+   `index.html`:
+   ```html
+   <!doctype html>
+   <html lang="en">
+     <head><meta charset="utf-8"><title>S3 Static Site</title></head>
+     <body>
+       <h1>Hosted on Amazon S3</h1>
+       <p>This page is served directly from an S3 bucket.</p>
+     </body>
+   </html>
+   ```
+
+   `error.html`:
+   ```html
+   <!doctype html>
+   <html lang="en">
+     <head><meta charset="utf-8"><title>Not Found</title></head>
+     <body>
+       <h1>404: Page not found</h1>
+     </body>
+   </html>
+   ```
+
+2. Open `s3-main-lab-[yourname]`, choose **Upload**, add both files, and choose **Upload**.
+3. Choose the **Properties** tab.
+4. Scroll to **Static website hosting** and choose **Edit**.
+5. Select **Enable**.
+6. Set **Hosting type** to **Host a static website**.
+7. Set **Index document** to `index.html`.
+8. Set **Error document** to `error.html`.
+9. Choose **Save changes**.
+10. Note the **Bucket website endpoint** URL shown at the bottom of the section.
+11. Choose the **Permissions** tab.
+12. Under **Block public access**, choose **Edit**.
+13. Clear **Block all public access**, type `confirm` when prompted, and choose **Save changes**.
+14. Under **Bucket policy**, choose **Edit** and replace the policy with the following, keeping the TLS deny statement from part 3 alongside it.
+
+    ```json
+    {
+      "Version": "2012-10-17",
+      "Statement": [
+        {
+          "Sid": "PublicReadGetObject",
+          "Effect": "Allow",
+          "Principal": "*",
+          "Action": "s3:GetObject",
+          "Resource": "arn:aws:s3:::s3-main-lab-[yourname]/*"
+        }
+      ]
+    }
+    ```
+
+15. Choose **Save changes**.
+
+![Bucket policy allowing public read for static website hosting](https://github.com/user-attachments/assets/d1b6527f-4351-4599-9f5c-0aa5ec5f56f3)
+
+16. Open the bucket website endpoint URL in a browser.
+17. Confirm the page renders.
+
+![Static website served from the S3 bucket endpoint](https://github.com/user-attachments/assets/8bad08b7-788a-47d8-9488-b5511e426d42)
+
+18. Append `/missing` to the URL to request a path that does not exist.
+19. Confirm the custom error page appears.
+
+![Custom error page returned for a missing path](https://github.com/user-attachments/assets/80f4d286-d0fc-4689-bc9d-3d6d68f0ffa8)
+
+    This lab deliberately makes a bucket public, which is the one case where that is appropriate. In production, keep Block Public Access enabled and serve the site through CloudFront with origin access control, as covered in section 24.3.
+
+### 11.12.7 Part 7: Server-Side Encryption
+
+1. Open `s3-main-lab-[yourname]` and choose the **Properties** tab.
+2. Scroll to **Default encryption** and note that SSE-S3 is already applied. All new buckets encrypt objects at rest by default.
+
+![Default encryption settings showing SSE-S3 applied](https://github.com/user-attachments/assets/b278cfac-0335-4351-9d2d-9bc4d6185a99)
+
+3. Choose **Edit**.
+4. Select **Server-side encryption with AWS Key Management Service keys (SSE-KMS)**.
+5. Under **AWS KMS key**, select **Choose from your AWS KMS keys** and select the default S3 key.
+6. Choose **Save changes**.
+7. Upload a new test file to the bucket.
+8. Open the object details and scroll to **Server-side encryption**.
+9. Confirm it reports SSE-KMS and names the key.
+
+   SSE-KMS adds an audit trail, because every decryption is logged to CloudTrail, and allows key policies to restrict who can read the data even if their S3 permissions would otherwise allow it.
+
+### 11.12.8 Part 8: Access Logging
+
+1. Open `s3-main-lab-[yourname]` and choose the **Properties** tab.
+2. Scroll to **Server access logging** and choose **Edit**.
+3. Select **Enable**.
+4. Under **Destination**, choose **Browse S3** and select `s3-logs-[yourname]`.
+5. Append `main-bucket-logs/` to the destination path so logs are written under that prefix.
+6. Choose **Save changes**.
+
+![Server access logging configured to the logs bucket](https://github.com/user-attachments/assets/1efed9e5-891a-4653-a81c-0cc21a8eb828)
+
+7. Generate some activity: upload a file, download a file, and open the website endpoint a few times.
+8. Wait. Log delivery is best effort and often takes an hour or more, so do not expect immediate results.
+9. Open `s3-logs-[yourname]` and navigate to the `main-bucket-logs/` prefix.
+10. Download and open a log file.
+
+![Access log files delivered to the logs bucket](https://github.com/user-attachments/assets/6533f5c7-32d3-4a43-aa90-f4da385b9d7f)
+
+![Contents of a server access log file](https://github.com/user-attachments/assets/fcff0101-8e69-4e6c-af7d-02577df9ecc2)
+
+![Log entries showing individual requests](https://github.com/user-attachments/assets/280fcaa4-eaf7-464a-b40a-386c506e305a)
+
+![Log record fields including requester, operation, and response code](https://github.com/user-attachments/assets/801d4019-af57-4081-8389-f2a1ef925732)
+
+    Never send a bucket's access logs to itself. Each log write generates another log record, which generates another, and the bucket grows without limit.
+
+### 11.12.9 Part 9: Cross-Region Replication
+
+1. Open `s3-main-lab-[yourname]` and confirm versioning is enabled from part 4. Replication requires it on both source and destination.
+2. Open `s3-replica-[yourname]` and enable versioning on it as well.
+3. Open the **IAM** console and choose **Roles**, then **Create role**.
+4. Set **Trusted entity type** to **AWS service**.
+5. Under **Use case**, select **S3**, then choose **S3**.
+6. Choose **Next**.
+7. Attach **AmazonS3FullAccess**. This is broader than least privilege and is acceptable only in a lab; a production replication role should be scoped to the two buckets.
+8. Choose **Next**, name the role `S3ReplicationRole`, and choose **Create role**.
+9. Return to `s3-main-lab-[yourname]` and choose the **Management** tab.
+10. Scroll to **Replication rules** and choose **Create replication rule**.
+11. Set **Replication rule name** to `replicate-to-oregon`.
+12. Set **Status** to **Enabled**.
+13. Under **Source bucket**, select **Apply to all objects in the bucket**.
+14. Under **Destination**, choose **Browse S3** and select `s3-replica-[yourname]`.
+15. Under **IAM role**, select `S3ReplicationRole`.
+16. Choose **Save**.
+17. When prompted about replicating existing objects, select **No, do not replicate existing objects**.
+18. Upload a new file to `s3-main-lab-[yourname]`.
+19. Wait one to two minutes.
+20. Open `s3-replica-[yourname]` in `us-west-2` and confirm the file has appeared.
+
+    Replication applies only to objects written after the rule was created. Existing objects require S3 Batch Replication.
+
+### 11.12.10 Part 10: Access Points
+
+1. Open `s3-main-lab-[yourname]` and choose the **Access Points** tab.
+2. Choose **Create access point**.
+3. Set **Access point name** to `images-access-point`.
+4. Set **Network origin** to **Internet**.
+5. Leave Block Public Access settings for the access point enabled.
+6. Under **Access point policy**, add the following, replacing the placeholders.
+
+   ```json
+   {
+     "Version": "2012-10-17",
+     "Statement": [
+       {
+         "Sid": "AllowImagesPrefixOnly",
+         "Effect": "Allow",
+         "Principal": { "AWS": "arn:aws:iam::[your-account-id]:root" },
+         "Action": "s3:GetObject",
+         "Resource": "arn:aws:s3:us-east-1:[your-account-id]:accesspoint/images-access-point/object/images/*"
+       }
+     ]
+   }
+   ```
+
+7. Choose **Create access point**.
+
+   The access point gives one application a door into the bucket that reaches only the `images/` prefix, without adding another statement to a bucket policy that every application shares.
+
+### 11.12.11 Part 11: Object Lock and Intelligent-Tiering
+
+**Object Lock**
+
+1. Choose **Create bucket**.
+2. Set **Bucket name** to `s3-locked-[yourname]` in **US East (N. Virginia)**.
+3. Expand **Advanced settings** and under **Object Lock**, select **Enable**, then acknowledge the warning.
+4. Choose **Create bucket**. Object Lock cannot be enabled on an existing bucket, which is why a new one is needed.
+5. Upload any file to `s3-locked-[yourname]`.
+6. Choose the uploaded object.
+7. Scroll to **Object Lock** and choose **Edit**.
+8. Set **Retention mode** to **Governance**.
+9. Set a retention period a few days in the future.
+10. Choose **Save changes**.
+11. Try to delete the object.
+12. Confirm the deletion is rejected with `403 Access Denied`.
+
+    Governance mode can be overridden by a user holding `s3:BypassGovernanceRetention`. Compliance mode cannot be overridden by anyone, including the root user, until the retention period expires.
+
+**Intelligent-Tiering archive configuration**
+
+13. Open `s3-main-lab-[yourname]` and choose the **Properties** tab.
+14. Scroll to **Intelligent-Tiering Archive configurations** and choose **Create configuration**.
+15. Set a configuration name, for example `archive-after-90-days`.
+16. Select **Apply to all objects in the bucket**.
+17. Enable **Archive Access tier** at `90` days and **Deep Archive Access tier** at `180` days.
+18. Choose **Create**.
+
+### 11.12.12 Recommendations
+
+- **Security.** Keep Block Public Access enabled and serve public content through CloudFront. Prefer bucket policies over ACLs. Use presigned URLs for temporary sharing. Enforce TLS with a policy condition.
+- **Cost.** Use lifecycle rules to move data down the storage classes, always clean up incomplete multipart uploads, and use Intelligent-Tiering when the access pattern is unknown.
+- **Reliability.** Enable versioning on anything that matters, and replicate data whose loss would be unacceptable.
+- **Performance.** Use multipart upload above 100 MB, and prefer CloudFront for content read repeatedly by many users.
+
+### 11.12.13 Cleanup
+
+Replication and versioning mean buckets must be emptied before they can be deleted.
+
+1. Open `s3-main-lab-[yourname]` and choose the **Management** tab, then delete both lifecycle rules and the replication rule.
+2. Return to the bucket list, select `s3-main-lab-[yourname]`, and choose **Empty**.
+3. Type `permanently delete` and choose **Empty**. This removes all object versions and delete markers.
+4. Select the bucket and choose **Delete**, then type the bucket name to confirm.
+5. Repeat the empty and delete sequence for `s3-logs-[yourname]` and `s3-replica-[yourname]`.
+6. For `s3-locked-[yourname]`, wait until the retention period expires, then empty and delete it. An object under a compliance-mode lock cannot be removed before then.
+7. Open **IAM**, choose **Roles**, search for `S3ReplicationRole`, select it, and choose **Delete**.
+
+---
+
+## 11.13 Lab: Amazon EFS
+
+This lab builds a shared file system, mounts it from two instances in different Availability Zones, and works through performance modes, access points, encryption, lifecycle management, backup, monitoring, and resource policies.
+
+**Cost note.** EFS bills per GB-month of storage, plus provisioned throughput if you enable it, plus data transfer. Task 6 switches to provisioned throughput temporarily, so follow step 6-4 to switch back. A short lab with a few megabytes of data costs very little, but leaving provisioned throughput enabled does not.
+
+**Architecture**
+
+```
+                AWS Region: us-east-1
++-------------------------------------------------------+
+|  Your VPC                                             |
+|                                                       |
+|  AZ: us-east-1a                 AZ: us-east-1b        |
+|  +-------------------+          +------------------+  |
+|  |  EC2 Web-1        |          |  EC2 Web-2       |  |
+|  |  (t3.micro)       |          |  (t3.micro)      |  |
+|  +---------+---------+          +--------+---------+  |
+|            | NFS 2049                    | NFS 2049   |
+|  +---------v---------+          +--------v---------+  |
+|  | EFS Mount Target  |          | EFS Mount Target |  |
+|  | us-east-1a        |          | us-east-1b       |  |
+|  +---------+---------+          +--------+---------+  |
+|            +--------------+---------------+           |
+|                           |                           |
+|              +------------v-------------+             |
+|              |   Amazon EFS File System |             |
+|              |   (shared storage)       |             |
+|              +--------------------------+             |
++-------------------------------------------------------+
+        CloudWatch (monitor)      AWS Backup (protect)
+```
+
+### 11.13.1 Setup: Network and Instances
+
+**Identify the network**
+
+1. Open the **VPC** console and choose **Your VPCs**.
+2. Note the **VPC ID** of the row where **Default VPC** is **Yes**.
+3. Choose **Subnets**.
+4. Filter by that VPC ID and note at least two subnet IDs **in different Availability Zones**, for example one in `us-east-1a` and one in `us-east-1b`.
+
+**Create the EC2 security group**
+
+5. Choose **Security groups**, then **Create security group**.
+6. Set **Security group name** to `efs-lab-ec2-sg`.
+7. Set **Description** to `SSH access for EFS lab instances`.
+8. Set **VPC** to the default VPC.
+9. Add an inbound rule: **Type** `SSH`, **Port** 22, **Source** **My IP**.
+10. Leave outbound rules at the default, which allows all traffic.
+11. Choose **Create security group**.
+12. Note the **Security group ID**, which you will need in the next task.
+
+**Launch Web-1**
+
+13. Open the **EC2** console and choose **Instances**, then **Launch instances**.
+14. In **Name**, enter `EFS-Lab-Web-1`.
+15. Select the latest **Amazon Linux 2023** AMI.
+16. Set **Instance type** to `t3.micro`.
+17. Select an existing key pair or create one.
+18. Next to **Network settings**, choose **Edit**.
+19. Set **VPC** to the default VPC and **Subnet** to the subnet in `us-east-1a`.
+20. Set **Auto-assign public IP** to **Enable**.
+21. Under **Firewall**, choose **Select existing security group** and select `efs-lab-ec2-sg`.
+22. Leave storage at the default 8 GiB gp3 volume.
+23. Choose **Launch instance**.
+
+**Launch Web-2**
+
+24. Repeat steps 13 to 23, naming the instance `EFS-Lab-Web-2` and selecting the subnet in `us-east-1b`. Everything else stays the same.
+
+**Verify**
+
+25. Wait until both instances show **Running** with **3/3 checks passed**.
+26. Note the **Public IPv4 address** of each.
+
+### 11.13.2 Task 1: Create the File System
+
+1. Type `EFS` in the console search bar and open **Elastic File System**.
+2. Choose **Create file system**.
+3. Choose **Customize** so the full settings are available.
+4. Set **Name** to `efs-lab-filesystem`.
+5. Set **File system type** to **Regional**, which replicates across Availability Zones.
+6. Leave **Automatic backups** enabled, or clear it if you intend to configure AWS Backup manually in task 10.
+7. Set **Lifecycle management** transitions to their defaults for now. Task 9 revisits this.
+8. Set **Throughput mode** to **Elastic**, which is the current default.
+9. Leave **Performance mode** as **General Purpose**. This cannot be changed after creation.
+10. Confirm **Encryption of data at rest** is enabled. It is on by default.
+11. Choose **Next**.
+12. On the network access page, confirm **VPC** is the default VPC.
+13. Confirm a mount target is listed for each Availability Zone containing your instances.
+14. Leave the security groups as they are for now. Task 2 replaces them.
+15. Choose **Next**.
+16. Skip the **File system policy** page for now. Task 12 configures it.
+17. Choose **Next**, review the summary, and choose **Create**.
+18. Wait until the file system state shows **Available**.
+19. Open the file system and review the **General**, **Network**, and **Monitoring** tabs.
+
+### 11.13.3 Task 2: Configure Security Groups
+
+EFS mount targets need their own security group allowing NFS from the instances.
+
+1. Open the **VPC** console, choose **Security groups**, then **Create security group**.
+2. Set **Security group name** to `efs-lab-efs-sg`.
+3. Set **Description** to `NFS access from EFS lab instances`.
+4. Set **VPC** to the default VPC.
+5. Add an inbound rule: **Type** `NFS`, **Port** 2049, and set **Source** to the security group `efs-lab-ec2-sg`.
+6. Leave outbound rules at the default.
+7. Choose **Create security group**.
+8. Return to the **EFS** console and open `efs-lab-filesystem`.
+9. Choose the **Network** tab.
+10. Choose **Manage**.
+11. For each mount target, remove the default security group and add `efs-lab-efs-sg`.
+12. Choose **Save**.
+
+**Why it is built this way**
+
+```
+EC2 instance in efs-lab-ec2-sg
+   |  outbound: all traffic allowed by default
+   v  TCP 2049 (NFS)
+EFS mount target in efs-lab-efs-sg
+   |  inbound rule: TCP 2049 from efs-lab-ec2-sg
+   v
+EFS file system
+```
+
+Referencing a security group rather than a CIDR range means the rule keeps working as instances are added, replaced, or given new addresses.
+
+### 11.13.4 Task 3: Review Mount Targets and Get the DNS Name
+
+1. In the EFS console, open `efs-lab-filesystem` and choose the **Network** tab.
+2. Confirm one mount target exists per Availability Zone, each showing **Available**, its subnet, its IP address, and `efs-lab-efs-sg`.
+3. Choose the **General** tab.
+4. Note the **DNS name**, which has the form `fs-0abc1234defg5678.efs.us-east-1.amazonaws.com`.
+5. Note the **File system ID**, the `fs-` prefix portion. Both are used in the mount commands below.
+6. Optionally, list the mount targets from the CLI.
+   ```bash
+   aws efs describe-mount-targets \
+     --file-system-id fs-0abc1234defg5678 \
+     --region us-east-1
+   ```
+
+Substitute your own file system ID for `fs-0abc1234defg5678` everywhere it appears from here on.
+
+### 11.13.5 Task 4: Mount EFS on Both Instances
+
+**On Web-1**
+
+1. Set permissions on the private key.
+   ```bash
+   chmod 400 ~/Downloads/my-key-pair.pem
+   ```
+2. Connect over SSH.
+   ```bash
+   ssh -i ~/Downloads/my-key-pair.pem ec2-user@<Web-1-Public-IP>
+   ```
+   On Windows PowerShell, use the full path to the key file instead.
+3. Update the package list.
+   ```bash
+   sudo dnf update -y
+   ```
+4. Install the EFS mount helper.
+   ```bash
+   sudo dnf install -y amazon-efs-utils
+   ```
+5. Install the NFS client, which the alternative mount method needs.
+   ```bash
+   sudo dnf install -y nfs-utils
+   ```
+6. Create the mount point.
+   ```bash
+   sudo mkdir -p /mnt/efs
+   ```
+7. Mount the file system with encryption in transit.
+   ```bash
+   sudo mount -t efs -o tls fs-0abc1234defg5678:/ /mnt/efs
+   ```
+8. Confirm the mount and its size.
+   ```bash
+   df -h /mnt/efs
+   ```
+   EFS reports a very large size because capacity is elastic. The figure is not a quota.
+
+**Alternative: the standard NFS client**
+
+9. Create a second mount point to compare the two methods.
+   ```bash
+   sudo mkdir -p /mnt/efs-nfs
+   ```
+10. Mount using NFS v4.1 directly.
+    ```bash
+    sudo mount -t nfs4 \
+      -o nfsvers=4.1,rsize=1048576,wsize=1048576,hard,timeo=600,retrans=2,noresvport \
+      fs-0abc1234defg5678.efs.us-east-1.amazonaws.com:/ \
+      /mnt/efs-nfs
+    ```
+11. Verify.
+    ```bash
+    mount | grep efs-nfs
+    ```
+    The mount helper is preferred, because it handles TLS, IAM authorization, and access points, none of which the plain NFS client supports.
+
+**Persist across reboots**
+
+12. Back up the current fstab.
+    ```bash
+    sudo cp /etc/fstab /etc/fstab.backup
+    ```
+13. Add the mount entry.
+    ```bash
+    echo "fs-0abc1234defg5678:/ /mnt/efs efs defaults,_netdev,tls 0 0" | sudo tee -a /etc/fstab
+    ```
+14. Verify the file.
+    ```bash
+    cat /etc/fstab
+    ```
+    The `_netdev` option is essential. Without it the system attempts the mount before networking is available and boot stalls.
+
+**On Web-2**
+
+15. Open a second terminal and connect to Web-2.
+    ```bash
+    ssh -i ~/Downloads/my-key-pair.pem ec2-user@<Web-2-Public-IP>
+    ```
+16. Install the tools.
+    ```bash
+    sudo dnf update -y
+    sudo dnf install -y amazon-efs-utils nfs-utils
+    ```
+17. Create the mount point and mount.
+    ```bash
+    sudo mkdir -p /mnt/efs
+    sudo mount -t efs -o tls fs-0abc1234defg5678:/ /mnt/efs
+    ```
+18. Confirm.
+    ```bash
+    df -h /mnt/efs
+    ```
+
+### 11.13.6 Task 5: Test Shared Access
+
+**Write from Web-1**
+
+1. List the empty file system.
+   ```bash
+   ls -la /mnt/efs/
+   ```
+2. Create a shared directory.
+   ```bash
+   sudo mkdir -p /mnt/efs/shared-data
+   ```
+3. Write a file.
+   ```bash
+   sudo bash -c 'echo "Hello from Web-1! Written at $(date)" > /mnt/efs/shared-data/web1-message.txt'
+   ```
+4. Read it back.
+   ```bash
+   cat /mnt/efs/shared-data/web1-message.txt
+   ```
+
+**Read from Web-2**
+
+5. In the Web-2 session, list the directory.
+   ```bash
+   ls -la /mnt/efs/shared-data/
+   ```
+6. Read the file written from the other instance and the other Availability Zone.
+   ```bash
+   cat /mnt/efs/shared-data/web1-message.txt
+   ```
+
+**Write from Web-2**
+
+7. Write a second file.
+   ```bash
+   sudo bash -c 'echo "Hello from Web-2! Written at $(date)" > /mnt/efs/shared-data/web2-message.txt'
+   ```
+8. In the Web-1 session, confirm both files are visible.
+   ```bash
+   ls -la /mnt/efs/shared-data/
+   cat /mnt/efs/shared-data/web2-message.txt
+   ```
+
+This is the property that block storage cannot provide: two instances in two Availability Zones reading and writing the same file system at the same time.
+
+**Demonstrate POSIX locking**
+
+9. On Web-1, take an exclusive lock and hold it for ten seconds.
+   ```bash
+   (
+     flock -x 200
+     echo "Web-1 has exclusive lock. Writing..."
+     sleep 10
+     echo "Web-1 done. Releasing lock."
+   ) 200>/mnt/efs/shared-data/lockfile
+   ```
+10. Within those ten seconds, run this on Web-2.
+    ```bash
+    (
+      flock -x 200
+      echo "Web-2 acquired lock. Writing..."
+    ) 200>/mnt/efs/shared-data/lockfile
+    ```
+11. Confirm Web-2 waits until Web-1 releases the lock. EFS honors POSIX file locking across instances, which is what allows applications to coordinate safely.
+
+**Check usage**
+
+12. Review capacity and consumption.
+    ```bash
+    df -h /mnt/efs
+    du -sh /mnt/efs/*
+    du -sh /mnt/efs/shared-data/*
+    ```
+
+### 11.13.7 Task 6: Performance and Throughput Modes
+
+**Performance modes**
+
+| Feature | General Purpose | Max I/O |
+| --- | --- | --- |
+| Latency | Lowest per operation | Higher per operation |
+| IOPS ceiling | Lower | Higher |
+| Suits | Web applications, content management, home directories | Highly parallel big data and media processing |
+| Changeable later | No, fixed at creation | No, fixed at creation |
+
+General Purpose is the right default for almost everything. Max I/O trades per-operation latency for a higher aggregate ceiling and only pays off with massive parallelism.
+
+**Throughput modes**
+
+| Mode | How throughput is set | Suits |
+| --- | --- | --- |
+| Elastic | Scales up and down automatically with demand | Spiky or unpredictable workloads; the current default |
+| Bursting | Scales with the amount of data stored, using a burst credit balance | Workloads whose throughput need tracks their size |
+| Provisioned | You specify a fixed MiB/s regardless of stored size | Consistent high throughput over a small dataset |
+
+**Measure a baseline**
+
+1. On Web-1, time a 100 MiB write.
+   ```bash
+   time dd if=/dev/zero of=/mnt/efs/shared-data/throughput-test.bin bs=1M count=100
+   ```
+2. Time the read back.
+   ```bash
+   time dd if=/mnt/efs/shared-data/throughput-test.bin of=/dev/null bs=1M
+   ```
+
+**Switch modes**
+
+3. In the EFS console, open the file system, choose the **General** tab, then **Edit**.
+4. Set **Throughput mode** to **Provisioned**.
+5. Set **Provisioned throughput** to `50` MiB/s.
+6. Choose **Save changes**.
+7. Rerun the two `dd` commands and compare.
+8. Return to **General**, then **Edit**, set **Throughput mode** to **Elastic**, and choose **Save changes**.
+9. Return once more and set **Throughput mode** to **Bursting**, then choose **Save changes**.
+
+Provisioned throughput bills for the reserved rate whether or not it is used. Leaving it enabled after the lab is the most expensive mistake available here, which is why step 9 exists.
+
+### 11.13.8 Task 7: Access Points
+
+An access point applies a fixed POSIX user and a root directory to every request made through it, so one file system can serve several applications without any of them seeing the others' data.
+
+**Create a web app access point**
+
+1. Open the file system and choose the **Access points** tab.
+2. Choose **Create access point**.
+3. Set **Name** to `webapp-ap`.
+4. Set **Root directory path** to `/webapp`.
+5. Under **POSIX user**, set **User ID** to `1001` and **Group ID** to `1001`.
+6. Under **Root directory creation permissions**, set **Owner user ID** to `1001`, **Owner group ID** to `1001`, and **Access point permissions** to `0755`.
+7. Choose **Create access point**.
+8. Note the access point ID, which has the form `fsap-0abc1234webapp`.
+
+**Create a data processing access point**
+
+9. Choose **Create access point** again.
+10. Set **Name** to `dataproc-ap` and **Root directory path** to `/dataproc`.
+11. Set the POSIX user and root directory creation values to `2001` for both user and group, with permissions `0755`.
+12. Choose **Create access point** and note its ID.
+
+**Mount through an access point**
+
+13. On Web-1, create a mount point.
+    ```bash
+    sudo mkdir -p /mnt/efs-webapp
+    ```
+14. Mount through the access point.
+    ```bash
+    sudo mount -t efs \
+      -o tls,accesspoint=fsap-0abc1234webapp \
+      fs-0abc1234defg5678:/ \
+      /mnt/efs-webapp
+    ```
+15. List the contents.
+    ```bash
+    ls -la /mnt/efs-webapp/
+    ```
+    The directory is empty, because the access point presents `/webapp` as the root. The `shared-data` directory is invisible through it.
+16. Create a file and check its ownership.
+    ```bash
+    sudo touch /mnt/efs-webapp/app-config.txt
+    ls -lan /mnt/efs-webapp/
+    ```
+17. Confirm the file is owned by UID 1001 and GID 2001 is absent, regardless of which OS user created it. The access point enforced the identity.
+
+**Verify isolation**
+
+18. Mount the second access point.
+    ```bash
+    sudo mkdir -p /mnt/efs-dataproc
+    sudo mount -t efs \
+      -o tls,accesspoint=fsap-0abc1234dataproc \
+      fs-0abc1234defg5678:/ \
+      /mnt/efs-dataproc
+    ```
+19. List its contents.
+    ```bash
+    ls -la /mnt/efs-dataproc/
+    ```
+20. Confirm `app-config.txt` is not visible. The two applications share one file system and see nothing of each other.
+
+### 11.13.9 Task 8: Encryption
+
+**At rest**
+
+1. In the EFS console, open the file system and choose the **General** tab.
+2. Scroll to the encryption section.
+3. Confirm **Encrypted** reads **Yes** and note the KMS key ARN. Encryption at rest is enabled by default and cannot be added to an existing unencrypted file system.
+
+**Optional: a customer-managed key**
+
+4. Open the **KMS** console and choose **Customer managed keys**, then **Create key**.
+5. Set key type to **Symmetric** and usage to **Encrypt and decrypt**, then choose **Next**.
+6. Set the alias to `efs-lab-key` and choose **Next**.
+7. Set key administrators to your IAM identity and choose **Next**.
+8. Set key users to your IAM identity and choose **Next**, then **Finish**.
+
+A customer-managed key must be selected when the file system is created. This step exists to show where the key comes from, not to change the existing file system.
+
+**In transit**
+
+9. Confirm the mounts made in task 4 used `-o tls`.
+10. Check what is mounted and how.
+    ```bash
+    mount | grep efs
+    ```
+11. Compare an unencrypted mount for contrast.
+    ```bash
+    sudo mkdir -p /mnt/efs-plain
+    sudo mount -t efs fs-0abc1234defg5678:/ /mnt/efs-plain
+    ```
+12. Time a write to each and compare. TLS costs a small amount of throughput and should still be used, which task 12 then enforces with a policy.
+
+### 11.13.10 Task 9: Lifecycle Management
+
+EFS lifecycle management moves files that have not been accessed recently into cheaper storage classes automatically.
+
+**EFS storage classes**
+
+| Class | Intended for |
+| --- | --- |
+| Standard | Frequently accessed files, replicated across zones |
+| Standard-Infrequent Access | Files untouched for days or weeks |
+| Archive | Files accessed a few times a year, the lowest-cost Regional class |
+| One Zone | Frequently accessed files in a single zone, at lower cost and lower resilience |
+| One Zone-Infrequent Access | Infrequently accessed files in a single zone |
+
+[The source notes quoted specific savings percentages for each class. Percentages change with pricing, so consult the EFS pricing page rather than relying on figures printed in study material. The ordering above is stable: Standard is the most expensive per GB and One Zone-IA and Archive are the least.]
+
+**Configure it**
+
+1. In the EFS console, open the file system, choose the **General** tab, then **Edit**.
+2. Scroll to **Lifecycle management**.
+3. Set **Transition into Infrequent Access** to **30 days since last access**. The available options are 1, 7, 14, 30, 60, 90, 180, and 365 days.
+4. Set **Transition into Archive** if you want the lowest-cost tier as well.
+5. Set **Transition out of Infrequent Access** to **On first access**, so a file that is read again returns to Standard and does not incur repeated retrieval latency.
+6. Choose **Save changes**.
+
+**Create test files**
+
+7. On Web-1, create files that would age into Infrequent Access in a real environment.
+   ```bash
+   sudo bash -c 'for i in {1..5}; do echo "Test file $i" > /mnt/efs/shared-data/lifecycle-test-$i.txt; done'
+   ls -la /mnt/efs/shared-data/lifecycle-test-*.txt
+   ```
+8. Note that the transition cannot be observed within the lab. Setting the transition to 1 day and returning the following day is the only way to see it happen.
+
+**Observe the split in CloudWatch**
+
+9. Once files have tiered, the `StorageBytes` metric with dimension `StorageClass = StandardStorage` and the same metric with `StorageClass = IAStorage` show how the data is distributed.
+
+### 11.13.11 Task 10: AWS Backup
+
+**Create a vault**
+
+1. Open the **AWS Backup** console.
+2. Choose **Backup vaults**, then **Create backup vault**.
+3. Set **Backup vault name** to `efs-lab-vault`.
+4. Leave **Encryption key** at the default.
+5. Choose **Create backup vault**.
+
+**Create a plan**
+
+6. Choose **Backup plans**, then **Create backup plan**.
+7. Select **Build a new plan**.
+8. Set **Backup plan name** to `efs-lab-backup-plan`.
+9. Under **Backup rules**, choose **Add backup rule**.
+10. Set **Rule name** to `daily-backup`.
+11. Set **Backup vault** to `efs-lab-vault`.
+12. Set **Backup frequency** to **Daily**.
+13. Leave the backup window at its default.
+14. Set **Transition to cold storage** to after `30` days.
+15. Set **Expire** to after `90` days.
+16. Choose **Create plan**.
+
+**Assign the file system**
+
+17. In the plan, choose **Assign resources**.
+18. Set **Resource assignment name** to `efs-lab-assignment`.
+19. Under **IAM role**, select **Default role**. AWS creates `AWSBackupDefaultServiceRole` if it does not already exist.
+20. Under **Define resource selection**, set **Resource type** to **EFS**.
+21. Choose **Add** and select `efs-lab-filesystem`.
+22. Choose **Assign resources**.
+
+**Run an on-demand backup**
+
+23. Choose **Protected resources** and find the file system.
+24. Choose **Create on-demand backup**.
+25. Set **Backup vault** to `efs-lab-vault`.
+26. Set **Retention period** to `7` days.
+27. Choose **Create on-demand backup**.
+28. Open **Jobs**, then **Backup jobs**, and watch the status move from **Running** to **Completed**. A small file system takes roughly 5 to 15 minutes.
+29. Open **Backup vaults**, then `efs-lab-vault`, and confirm a recovery point exists.
+30. Choose the recovery point and review its size, creation time, and expiry.
+
+### 11.13.12 Task 11: Monitoring with CloudWatch
+
+**Key metrics**
+
+| Metric | What it tells you |
+| --- | --- |
+| `BurstCreditBalance` | Remaining burst credits, in Bursting throughput mode. Falling toward zero means throughput is about to be throttled |
+| `PercentIOLimit` | How close a General Purpose file system is to its IOPS ceiling |
+| `ClientConnections` | Number of connected clients |
+| `TotalIOBytes` | Total read and write throughput |
+| `StorageBytes` | Stored data, broken down by storage class |
+
+**View metrics**
+
+1. Open the **CloudWatch** console and choose **Metrics**, then **All metrics**.
+2. Choose **EFS**, then **File System Metrics**.
+3. Select your file system ID.
+4. Select **BurstCreditBalance** to add it to the graph.
+5. Alternatively, open the EFS console, select the file system, and choose the **Monitoring** tab, which shows throughput, IOPS, client connections, and stored bytes.
+6. Generate load and watch the graphs update. Metrics publish at roughly one-minute intervals, so allow a few minutes.
+   ```bash
+   for i in {1..10}; do
+     dd if=/dev/zero of=/mnt/efs/shared-data/metric-test-$i.bin bs=1M count=10 conv=fdatasync
+   done
+   ```
+
+**Create an alarm**
+
+7. In CloudWatch, choose **Alarms**, then **Create alarm**.
+8. Choose **Select metric**, then **EFS**, then **File System Metrics**, and select `BurstCreditBalance` for your file system.
+9. Choose **Select metric**.
+10. Set the statistic to **Minimum** and the period to **5 minutes**.
+11. Set the condition to **Lower than** a threshold representing a small fraction of your normal balance.
+12. Choose **Next**.
+13. Choose **Create new topic**, enter an email address, and choose **Create topic**.
+14. Choose **Next**, set **Alarm name** to `EFS-BurstCredits-Low`, and choose **Create alarm**.
+15. Confirm the SNS subscription from the email you receive, or the alarm will never reach you.
+
+**Create a dashboard**
+
+16. Choose **Dashboards**, then **Create dashboard**.
+17. Set the name to `EFS-Lab-Dashboard`.
+18. Add a **Line** widget and select `TotalIOBytes`, `PercentIOLimit`, and `BurstCreditBalance`.
+19. Add a **Number** widget for `ClientConnections`.
+20. Choose **Save dashboard**.
+
+### 11.13.13 Task 12: File System Policies
+
+A file system policy is a resource-based policy on the EFS file system itself, evaluated alongside IAM policies and security groups.
+
+**Require TLS**
+
+1. Open the file system and choose the **File system policy** tab.
+2. Choose **Edit**.
+3. Choose **Policy examples** and select **Prevent unencrypted access**, or paste the following.
+
+   ```json
+   {
+     "Version": "2012-10-17",
+     "Id": "efs-policy-require-tls",
+     "Statement": [
+       {
+         "Sid": "DenyNonTLS",
+         "Effect": "Deny",
+         "Principal": { "AWS": "*" },
+         "Action": "elasticfilesystem:ClientMount",
+         "Condition": {
+           "Bool": { "aws:SecureTransport": "false" }
+         }
+       }
+     ]
+   }
+   ```
+
+4. Choose **Set policy**.
+
+**Test it**
+
+5. On Web-1, unmount the plain mount created in task 8 if it is still present.
+   ```bash
+   sudo umount /mnt/efs-plain 2>/dev/null
+   ```
+6. Attempt a mount without TLS.
+   ```bash
+   sudo mkdir -p /mnt/efs-notls-test
+   sudo mount -t efs fs-0abc1234defg5678:/ /mnt/efs-notls-test
+   ```
+7. Confirm the mount is refused.
+8. Confirm the existing TLS mount still works.
+   ```bash
+   ls /mnt/efs/shared-data/
+   ```
+
+**Require access point usage, optional**
+
+9. Return to the **File system policy** tab and choose **Edit**.
+10. Add a statement denying direct root access so applications must go through an access point.
+
+    ```json
+    {
+      "Version": "2012-10-17",
+      "Statement": [
+        {
+          "Sid": "DenyDirectRootAccess",
+          "Effect": "Deny",
+          "Principal": { "AWS": "*" },
+          "Action": "elasticfilesystem:ClientRootAccess",
+          "Condition": {
+            "Bool": { "elasticfilesystem:AccessedViaMountTarget": "true" }
+          }
+        }
+      ]
+    }
+    ```
+
+11. Choose **Set policy**.
+
+### 11.13.14 Troubleshooting
+
+| Symptom | Likely cause and fix |
+| --- | --- |
+| Mount times out | The mount target's security group lacks an inbound rule for TCP 2049 from the instance's security group. Test reachability with `nc -zv <mount-target-ip> 2049` |
+| Mount times out | No mount target exists in the instance's Availability Zone, or the instance is in a different VPC |
+| `access denied by server` | A file system policy requires TLS. Add `-o tls` |
+| `access denied by server` | A policy requires an access point. Add `-o accesspoint=<fsap-id>` |
+| `access denied by server` | IAM authorization is enabled. Add `-o iam` and attach a role granting the EFS client actions to the instance |
+| Permission denied on write | The EFS root is owned by `root`. Create a subdirectory and change its owner: `sudo mkdir -p /mnt/efs/myapp && sudo chown ec2-user:ec2-user /mnt/efs/myapp` |
+| Permission denied on write | An access point enforces a specific UID that differs from the writing user |
+| Slow writes | Burst credits are exhausted in Bursting mode. Check `BurstCreditBalance` and switch to Elastic throughput |
+| Slow writes | Single-threaded I/O. EFS scales with parallelism, so use concurrent writers |
+| Slow writes | The instance type's network bandwidth is the bottleneck, which is common on `t3.micro` |
+| Mount lost after reboot | The fstab entry is missing `_netdev`, so the mount was attempted before networking was ready |
+| `amazon-efs-utils` not found | On Ubuntu and Debian the package must be built from source, using the `efs-utils` repository on GitHub |
+
+### 11.13.15 Cleanup
+
+Order matters here, because several resources reference each other.
+
+1. On both instances, unmount everything.
+   ```bash
+   sudo umount /mnt/efs
+   sudo umount /mnt/efs-webapp 2>/dev/null
+   sudo umount /mnt/efs-dataproc 2>/dev/null
+   sudo umount /mnt/efs-nfs 2>/dev/null
+   sudo umount /mnt/efs-plain 2>/dev/null
+   sudo umount /mnt/efs-notls-test 2>/dev/null
+   ```
+2. Remove the fstab entry, or the instance will hang on its next boot.
+   ```bash
+   sudo sed -i '/fs-0abc1234defg5678/d' /etc/fstab
+   ```
+3. Confirm nothing remains mounted.
+   ```bash
+   mount | grep efs
+   ```
+4. In the EC2 console, select `EFS-Lab-Web-1` and `EFS-Lab-Web-2`, then choose **Instance state**, then **Terminate instance**.
+5. In the EFS console, open the file system and choose the **Access points** tab, then delete both access points.
+6. Select `efs-lab-filesystem`, choose **Actions**, then **Delete file system**, type the file system ID, and confirm.
+7. In **AWS Backup**, open `efs-lab-vault`, delete every recovery point, then delete the vault. A vault containing recovery points cannot be deleted.
+8. Choose **Backup plans**, select `efs-lab-backup-plan`, and delete it.
+9. In the VPC console, delete `efs-lab-efs-sg` first, because `efs-lab-ec2-sg` is referenced by it, then delete `efs-lab-ec2-sg`.
+10. In CloudWatch, delete the `EFS-BurstCredits-Low` alarm and the `EFS-Lab-Dashboard` dashboard.
+11. If you created `efs-lab-key` in KMS, choose **Key actions**, then **Schedule key deletion**, and set the waiting period. Seven days is the minimum; KMS keys cannot be deleted immediately.
+12. Check the Billing dashboard the following day to confirm nothing is still accruing.
+
+### 11.13.16 Best Practices
+
+- **Security.** Reference security groups rather than CIDR ranges in the NFS rule, always mount with TLS, use access points to isolate applications, and enforce both with a file system policy.
+- **Performance.** Use Elastic throughput unless you have measured a reason not to. Choose General Purpose performance mode unless the workload is massively parallel. Remember that performance mode is fixed at creation.
+- **Cost.** Enable lifecycle management so cold files move down the classes. Use One Zone file systems only for data that can be regenerated. Never leave Provisioned throughput enabled after testing.
+- **Operations.** Always include `_netdev` in fstab entries, alarm on `BurstCreditBalance` if using Bursting mode, and protect the file system with AWS Backup rather than relying on the default automatic backups alone.
+
+---
+
+## 11.14 End-of-Chapter Questions
+
+**Q1.** A company needs storage that multiple EC2 instances across two Availability Zones can read from and write to at the same time. Which service should be used?
+
+- A. Amazon EBS
+- B. Amazon S3
+- C. Amazon EFS
+- D. EC2 instance store
+
+**Answer: C.** *Target exam: AWS Certified Cloud Practitioner.* An EBS volume attaches to one instance in one Availability Zone in normal use, whereas EFS is a shared file system many instances can mount concurrently.
+
+**Q2.** Which S3 storage class offers the lowest storage cost for data that must be retained for years and is almost never retrieved?
+
+- A. S3 Standard-Infrequent Access
+- B. S3 Glacier Instant Retrieval
+- C. S3 Glacier Flexible Retrieval
+- D. S3 Glacier Deep Archive
+
+**Answer: D.** *Target exam: AWS Certified Cloud Practitioner.* Deep Archive is the lowest-cost class in AWS, with retrieval measured in hours, which suits compliance archives and tape replacement.
+
+**Q3.** What happens when an object is deleted from an S3 bucket that has versioning enabled?
+
+- A. The object and all its versions are permanently removed
+- B. A delete marker is added and the previous versions are retained
+- C. The object moves to S3 Glacier
+- D. The delete fails unless versioning is suspended first
+
+**Answer: B.** *Target exam: AWS Certified Cloud Practitioner.* Versioning turns a delete into a marker, so recovery is possible until each version is deleted individually.
+
+**Q4.** An EC2 instance is terminated. Which storage is lost as a result?
+
+- A. Data on an attached EBS volume with delete-on-termination disabled
+- B. Data written to an Amazon EFS file system
+- C. Data on the instance store volumes
+- D. Objects in Amazon S3
+
+**Answer: C.** *Target exam: AWS Certified Cloud Practitioner.* Instance store is physically attached to the host and does not survive stop or termination, while the other three exist independently of the instance.
+
+**Q5.** A database on EC2 requires consistent sub-millisecond latency and 100,000 IOPS on a single 20 TiB volume. Which EBS volume type meets this?
+
+- A. General Purpose SSD (gp3)
+- B. Provisioned IOPS SSD (io2 Block Express)
+- C. Throughput Optimized HDD (st1)
+- D. Cold HDD (sc1)
+
+**Answer: B.** *Target exam: AWS Certified Solutions Architect - Associate.* gp3 tops out at 80,000 IOPS and 16 TiB on the previous generation sizing, and the HDD types cannot deliver low-latency random I/O at all; only io2 Block Express reaches 256,000 IOPS and 64 TiB.
+
+**Q6.** An architect must ensure that regulatory records in S3 cannot be deleted or altered by anyone, including an administrator with full permissions, for seven years. What should be configured?
+
+- A. Versioning with MFA delete
+- B. A bucket policy denying `s3:DeleteObject`
+- C. S3 Object Lock in compliance mode, enabled when the bucket is created
+- D. S3 Glacier Deep Archive with a lifecycle rule
+
+**Answer: C.** *Target exam: AWS Certified Solutions Architect - Associate.* Compliance mode cannot be overridden by any identity, including the root user, until the retention period expires, and Object Lock must be enabled at bucket creation.
+
+**Q7.** Cross-Region replication has been configured on a bucket containing 50,000 existing objects, but none of them appear in the destination bucket. What is the most likely explanation?
+
+- A. Versioning is not enabled on the source bucket
+- B. Replication rules apply only to objects written after the rule was created, so existing objects require S3 Batch Replication
+- C. The destination bucket is in the same Region
+- D. The replication role lacks permission to read the source bucket
+
+**Answer: B.** *Target exam: AWS Certified Solutions Architect - Associate.* New objects replicate automatically; backfilling existing objects is a separate batch operation.

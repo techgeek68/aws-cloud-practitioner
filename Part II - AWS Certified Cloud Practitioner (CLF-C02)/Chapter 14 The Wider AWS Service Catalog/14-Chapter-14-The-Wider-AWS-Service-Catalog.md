@@ -1,0 +1,252 @@
+# Chapter 14: The Wider AWS Service Catalog
+
+---
+
+## 14.1 Why This Chapter Exists
+
+Chapters 9 through 13 covered networking, compute, storage, databases, and scaling in depth. Those account for most architecture work, but they are not the whole of what CLF-C02 asks about. Domain 3, Cloud Technology and Services, is 34% of the exam and its in-scope list reaches across analytics, machine learning, developer tooling, governance, migration, and end user computing.
+
+This chapter is a catalog rather than a tutorial. The goal is recognition: given a described problem, know which service addresses it. Depth beyond that belongs to the chapters that own each topic, and those are referenced throughout.
+
+**On deprecated services.** AWS has retired or closed to new customers an unusually large number of services since mid-2024. Several appeared in the source notes for this course as current options. They are listed in section 14.10 rather than in the categories above it, because recommending a service that no longer accepts new customers is worse than omitting it.
+
+---
+
+## 14.2 Analytics
+
+| Service | What it does |
+| --- | --- |
+| Amazon Athena | Serverless SQL queries directly against data in Amazon S3, with no cluster to run |
+| AWS Glue | Serverless ETL, plus the Glue Data Catalog that other services query against |
+| AWS Lake Formation | Permissions and governance over a data lake built on S3 |
+| Amazon EMR | Managed Hadoop, Spark, Hive, and Presto for large-scale batch processing |
+| Amazon Kinesis Data Streams | Real-time ingestion of streaming records for custom consumers |
+| Amazon Data Firehose | Delivery of streaming data into S3, Redshift, or OpenSearch with no code |
+| Amazon MSK | Managed Apache Kafka |
+| Amazon OpenSearch Service | Search and log analytics, with dashboards |
+| Amazon QuickSight | Business intelligence dashboards and visualizations |
+| AWS Clean Rooms | Collaboration on combined datasets without either party exposing raw data |
+| AWS DataZone | Data cataloging, discovery, and governance across an organization |
+
+The shape of a typical pipeline is ingest with Kinesis or Firehose, store in S3, catalog and transform with Glue, query with Athena or Redshift, and visualize with QuickSight. Section 28.7 builds one end to end.
+
+---
+
+## 14.3 AI and Machine Learning
+
+**Platforms**
+
+- **Amazon SageMaker AI** is the full machine learning platform: build, train, tune, deploy, and monitor custom models. Its components include Studio, Canvas for no-code model building, Autopilot for automated model selection, Feature Store, Clarify for bias detection, Model Monitor, and Pipelines.
+- **Amazon Bedrock** provides managed API access to foundation models from Amazon, Anthropic, Meta, Mistral, Stability AI, and others, for building generative AI applications without managing infrastructure. Model availability varies by Region.
+- **Amazon Q** is AWS's generative AI assistant, with Q Developer for coding and Q Business for enterprise knowledge.
+
+**Pretrained AI services**, consumed as APIs with no model training required:
+
+| Task | Service |
+| --- | --- |
+| Image and video analysis | Amazon Rekognition |
+| Natural language processing over text | Amazon Comprehend |
+| Speech to text | Amazon Transcribe |
+| Text to speech | Amazon Polly |
+| Language translation | Amazon Translate |
+| Text and data extraction from documents | Amazon Textract |
+| Enterprise search | Amazon Kendra |
+| Conversational interfaces and chatbots | Amazon Lex |
+| Personalized recommendations | Amazon Personalize |
+| Fraud detection | Amazon Fraud Detector |
+| Health data analysis | Amazon HealthLake, Amazon Comprehend Medical |
+
+The exam distinction worth holding: **SageMaker is for building your own model, Bedrock is for using someone else's foundation model, and the pretrained services are for a specific task you do not want to think about at all.**
+
+---
+
+## 14.4 Developer Tools
+
+| Service | What it does |
+| --- | --- |
+| AWS CodePipeline | Orchestrates a release pipeline through build, test, and deploy stages |
+| AWS CodeBuild | Compiles source, runs tests, and produces deployable artifacts |
+| AWS CodeDeploy | Deploys to EC2, Lambda, ECS, and on-premises servers, with rollback |
+| AWS CodeArtifact | Private package repository for npm, PyPI, Maven, and NuGet |
+| AWS CodeCommit | Managed private Git repositories |
+| Amazon CodeCatalyst | Unified service combining source, build, deploy, and project tracking |
+| AWS X-Ray | Distributed tracing across services, for finding where latency comes from |
+| AWS Amplify | Frontend hosting with CI/CD for web and mobile applications |
+| AWS CDK | Defines infrastructure in TypeScript, Python, Java, or C#, compiled to CloudFormation |
+| AWS SAM | A simplified template syntax for serverless applications |
+
+**A note on AWS CodeCommit.** AWS announced in July 2024 that CodeCommit would be de-emphasized and closed it to new accounts. On November 24, 2025, AWS reversed that decision and returned CodeCommit to full General Availability, open to new customers again, with Git Large File Storage support announced for early 2026. Study material written between those dates says CodeCommit is deprecated. It is not.
+
+CI/CD design is covered in section 27.5.
+
+---
+
+## 14.5 Management and Governance
+
+| Purpose | Services |
+| --- | --- |
+| Infrastructure as code | AWS CloudFormation, AWS CDK, CloudFormation StackSets |
+| Standardized provisioning | AWS Service Catalog |
+| Configuration recording and compliance rules | AWS Config |
+| Resource discovery | AWS Resource Explorer |
+| Operational management | AWS Systems Manager: Session Manager, Run Command, Patch Manager, Automation, Parameter Store |
+| Multi-account governance | AWS Organizations, AWS Control Tower |
+| Cost management | AWS Budgets, Cost Explorer, Cost and Usage Report, Cost Anomaly Detection, AWS Pricing Calculator |
+| Right-sizing recommendations | AWS Compute Optimizer |
+| Best-practice checks | AWS Trusted Advisor |
+| Software licensing | AWS License Manager |
+| Cross-account resource sharing | AWS Resource Access Manager |
+| Resilience testing | AWS Resilience Hub, AWS Fault Injection Service |
+| Guided deployment of common workloads | AWS Launch Wizard |
+
+**AWS Control Tower** deserves a line of its own for the exam. It sets up and governs a multi-account environment, applying guardrails through Organizations and Config, and is the answer when a question describes an organization needing a compliant landing zone rather than a single account.
+
+**Observability** sits here too: Amazon CloudWatch for metrics, logs, alarms, and dashboards, AWS CloudTrail for API audit, AWS X-Ray for tracing, and Amazon Managed Service for Prometheus and Amazon Managed Grafana for teams already using those tools.
+
+---
+
+## 14.6 Migration and Transfer
+
+| Purpose | Service |
+| --- | --- |
+| Discovery and planning | AWS Migration Hub, AWS Application Discovery Service |
+| Server migration | AWS Application Migration Service |
+| Database migration | AWS Database Migration Service, plus the Schema Conversion Tool for engine changes |
+| Online data transfer | AWS DataSync |
+| Managed file transfer endpoints | AWS Transfer Family, offering SFTP, FTPS, and FTP |
+| Hybrid storage | AWS Storage Gateway |
+| Physical bulk transfer | AWS Snow Family, with the availability limits noted in section 1.6.6 |
+
+Migration strategy, including the seven Rs, is covered in section 29.1.
+
+---
+
+## 14.7 Application Integration
+
+| Service | What it does |
+| --- | --- |
+| Amazon SQS | Message queues that decouple producers from consumers |
+| Amazon SNS | Publish and subscribe messaging with fan-out to many subscribers |
+| Amazon EventBridge | Event bus routing events by rule, including from SaaS partners |
+| AWS Step Functions | Visual workflow orchestration across services |
+| Amazon MQ | Managed ActiveMQ and RabbitMQ, for applications already using those protocols |
+| Amazon API Gateway | Managed REST, HTTP, and WebSocket APIs |
+| AWS AppSync | Managed GraphQL APIs |
+| Amazon EventBridge Pipes | Point-to-point integration between a source and a target, with optional filtering and enrichment |
+| Amazon VPC Lattice | Service-to-service connectivity, security, and monitoring across VPCs and accounts |
+
+Decoupled and event-driven design is covered in Chapter 25.
+
+---
+
+## 14.8 End User Computing and Business Applications
+
+| Service | What it does |
+| --- | --- |
+| Amazon WorkSpaces | Managed virtual desktops, Windows and Linux |
+| Amazon WorkSpaces Secure Browser | Browser-only access to internal web applications, with no desktop to manage |
+| Amazon AppStream 2.0 | Streams individual applications rather than a full desktop |
+| Amazon Connect | Cloud contact center with omnichannel routing |
+| Amazon Simple Email Service | High-volume transactional and marketing email |
+| AWS End User Messaging | SMS, MMS, push, and text-to-voice messaging |
+| Amazon Chime SDK | Embeddable audio, video, and messaging capabilities for your own applications |
+
+**Media services** appear on the exam occasionally: AWS Elemental MediaConvert for file-based encoding, MediaLive for live encoding, MediaPackage for packaging and origination, and Amazon Interactive Video Service for low-latency live streaming.
+
+**Specialized services** worth recognizing by name: AWS IoT Core and Greengrass for connected devices, Amazon Managed Blockchain, AWS Ground Station for satellite downlink, Amazon Braket for quantum computing, and AWS Supply Chain.
+
+---
+
+## 14.9 Buying and Support Resources
+
+- **AWS Marketplace.** A curated catalog of third-party software, data, and services that can be purchased and deployed into your account, with charges appearing on your AWS bill. Private Marketplace lets an organization restrict what its teams may buy.
+- **AWS Partner Network.** Consulting partners who deliver services, and technology partners whose software runs on AWS. Competency and specialization designations indicate validated expertise in a domain.
+- **AWS Professional Services.** AWS's own consulting organization, engaged for large migrations and transformations.
+- **AWS Skill Builder.** Digital training, including exam preparation and hands-on labs.
+- **AWS re:Post.** A community question and answer service, replacing the older AWS Forums.
+- **AWS Knowledge Center and documentation.** The authoritative reference, and the only source this course treats as definitive.
+- **AWS Well-Architected Tool.** Covered in section 6.7.
+
+---
+
+## 14.10 Retired and Restricted Services
+
+These appeared in the source notes for this course as current options. Each is either closed to new customers or has an announced end of support, verified against AWS documentation and announcements. Do not design around them, and do not expect them on a current exam.
+
+| Service | Status | Use instead |
+| --- | --- | --- |
+| Amazon QLDB | Retired | Amazon Aurora PostgreSQL with verifiable history |
+| AWS Cloud9 | Closed to new customers since July 2024 | AWS IDE Toolkits, or AWS CloudShell for a browser terminal |
+| Amazon Forecast | Closed to new customers since July 2024 | Amazon SageMaker AI |
+| AWS Data Pipeline | Closed to new customers since July 2024 | AWS Glue workflows or AWS Step Functions |
+| Amazon CloudSearch | Closed to new customers since July 2024 | Amazon OpenSearch Service |
+| Amazon SimpleDB | Closed to new customers since July 2024 | Amazon DynamoDB |
+| S3 Select | Closed to new customers since July 2024 | Amazon Athena |
+| Amazon Chime | Support ended February 20, 2026 | Amazon Chime SDK for embedded communications |
+| Amazon Pinpoint | Support ends October 30, 2026; closed to new customers since May 20, 2025 | AWS End User Messaging for SMS, voice, and push; Amazon SES for email |
+| Amazon Lookout for Vision | Support ended October 31, 2025 | Amazon SageMaker AI, or Amazon Rekognition Custom Labels |
+| Amazon Lookout for Equipment | Sunset announced | Amazon SageMaker AI |
+| AWS App Mesh | Retirement announced | Amazon VPC Lattice or Amazon ECS Service Connect |
+| Amazon FSx File Gateway | Retirement announced | AWS Storage Gateway file gateway |
+| Amazon FinSpace | Sunset announced | Purpose-built analytics services |
+| AWS Proton | Sunset announced | AWS Service Catalog or AWS CDK |
+| AWS IoT Greengrass v1 | Sunset announced | AWS IoT Greengrass v2 |
+| AWS DeepComposer | Support ended September 17, 2025 | Amazon SageMaker AI |
+| Amazon Simple Workflow Service | Legacy, limited investment | AWS Step Functions |
+| Elastic Transcoder | Legacy | AWS Elemental MediaConvert |
+| Amazon Sumerian | Retired | Third-party AR and VR tooling |
+| AWS Mainframe Modernization | Maintenance phase since November 7, 2025 | AWS Transform |
+| Systems Manager Change Manager and Incident Manager | Maintenance phase since November 7, 2025 | Third-party or custom tooling |
+| VMware Cloud on AWS | No longer resold by AWS since April 30, 2024 | Amazon Elastic VMware Service |
+| AWS Snowmobile, AWS Snowcone | Retired and discontinued | AWS DataSync, AWS Data Transfer Terminal |
+
+[AWS does not publish these retirements in one place, and dates move. Verify anything critical against the service's own documentation page, which carries an end of support notice at the top when one applies.]
+
+---
+
+## 14.11 End-of-Chapter Questions
+
+**Q1.** A company wants to run SQL queries directly against log files stored in Amazon S3, without provisioning any servers or loading the data elsewhere. Which service should be used?
+
+- A. Amazon Redshift
+- B. Amazon Athena
+- C. Amazon EMR
+- D. AWS Glue
+
+**Answer: B.** *Target exam: AWS Certified Cloud Practitioner.* Athena is serverless and queries S3 in place; Redshift requires loading data into a warehouse and EMR requires a cluster.
+
+**Q2.** Which service provides managed API access to foundation models for building generative AI applications?
+
+- A. Amazon SageMaker AI
+- B. Amazon Comprehend
+- C. Amazon Bedrock
+- D. Amazon Kendra
+
+**Answer: C.** *Target exam: AWS Certified Cloud Practitioner.* Bedrock offers foundation models from several providers through an API; SageMaker AI is for building and training your own models.
+
+**Q3.** An organization needs to set up a multi-account AWS environment with governance guardrails applied automatically to new accounts. Which service is designed for this?
+
+- A. AWS Config
+- B. AWS Control Tower
+- C. AWS Systems Manager
+- D. AWS Service Catalog
+
+**Answer: B.** *Target exam: AWS Certified Cloud Practitioner.* Control Tower establishes and governs a landing zone, using Organizations and Config underneath to apply guardrails.
+
+**Q4.** A company wants to convert scanned invoices into structured data it can process automatically. Which service fits?
+
+- A. Amazon Rekognition
+- B. Amazon Transcribe
+- C. Amazon Textract
+- D. Amazon Polly
+
+**Answer: C.** *Target exam: AWS Certified Cloud Practitioner.* Textract extracts text, forms, and tables from documents; Rekognition analyzes images and video for objects and faces rather than document structure.
+
+**Q5.** An architect inherits a design document specifying Amazon QLDB for an immutable audit ledger and AWS Cloud9 as the team IDE. What should the architect do?
+
+- A. Proceed, since both are established AWS services
+- B. Replace both, because QLDB has been retired and Cloud9 has been closed to new customers, and select current alternatives such as Aurora PostgreSQL and the AWS IDE Toolkits
+- C. Request a support exception to continue using them
+- D. Replace only Cloud9, since QLDB remains available
+
+**Answer: B.** *Target exam: AWS Certified Solutions Architect - Associate.* Both were part of the July 2024 wave of retirements and closures, and building on a service closed to new customers leaves a design that cannot be deployed in a new account.
