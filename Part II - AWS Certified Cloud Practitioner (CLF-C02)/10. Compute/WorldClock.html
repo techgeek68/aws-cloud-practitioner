@@ -1,0 +1,80 @@
+<!DOCTYPE html>
+<html>
+<head><title>World Clock</title>
+<style>
+body{background:#0d0d0d;color:#fff;font-family:monospace;display:flex;flex-wrap:wrap;gap:1.5rem;padding:2rem;}
+.clock{background:#1a1a1a;padding:1.5rem;border-radius:12px;min-width:220px;text-align:center;position:relative;transition:background .3s;}
+.clock.day{background:#1a1a1a;}
+.clock.night{background:#111827;}
+h3{margin:0 0 .3rem;color:#facc15;display:flex;align-items:center;justify-content:center;gap:.4rem;}
+.time{font-size:2rem;}
+.date{font-size:.85rem;color:#9ca3af;margin-top:.3rem;}
+.offset{font-size:.75rem;color:#6b7280;margin-top:.2rem;}
+button{margin-bottom:1.5rem;background:#facc15;color:#0d0d0d;border:none;padding:.5rem 1rem;border-radius:8px;font-family:monospace;font-weight:bold;cursor:pointer;}
+.controls{width:100%;}
+</style>
+</head>
+<body>
+<div class="controls"><button id="toggleFormat">Switch to 24h</button></div>
+<script>
+const zones = [
+  {label:'New York', tz:'America/New_York'},
+  {label:'London',   tz:'Europe/London'},
+  {label:'Dubai',    tz:'Asia/Dubai'},
+  {label:'Tokyo',    tz:'Asia/Tokyo'},
+  {label:'Sydney',   tz:'Australia/Sydney'},
+  {label:'Kathmandu',tz:'Asia/Kathmandu'},
+];
+
+let use24h = false;
+
+zones.forEach(z => {
+  const d = document.createElement('div');
+  d.className = 'clock';
+  d.id = `clock-${z.tz}`;
+  d.innerHTML = `
+    <h3><span class="icon" id="icon-${z.tz}"></span>${z.label}</h3>
+    <div class="time" id="time-${z.tz}"></div>
+    <div class="date" id="date-${z.tz}"></div>
+    <div class="offset" id="offset-${z.tz}"></div>
+  `;
+  document.body.appendChild(d);
+});
+
+function getOffset(tz) {
+  const now = new Date();
+  const fmt = new Intl.DateTimeFormat('en-US', {timeZone: tz, timeZoneName: 'shortOffset'});
+  const part = fmt.formatToParts(now).find(p => p.type === 'timeZoneName');
+  return part ? part.value : '';
+}
+
+function updateClocks() {
+  const now = new Date();
+  zones.forEach(z => {
+    const hourStr = new Intl.DateTimeFormat('en-US', {timeZone: z.tz, hour: 'numeric', hour12: false}).format(now);
+    const hour = parseInt(hourStr, 10);
+    const isNight = hour < 6 || hour >= 19;
+
+    document.getElementById(`time-${z.tz}`).textContent =
+      now.toLocaleTimeString('en-US', {timeZone: z.tz, hour12: !use24h});
+    document.getElementById(`date-${z.tz}`).textContent =
+      now.toLocaleDateString('en-US', {timeZone: z.tz, weekday: 'short', month: 'short', day: 'numeric'});
+    document.getElementById(`offset-${z.tz}`).textContent = getOffset(z.tz);
+    document.getElementById(`icon-${z.tz}`).textContent = isNight ? '🌙' : '☀️';
+
+    const clockEl = document.getElementById(`clock-${z.tz}`);
+    clockEl.classList.toggle('night', isNight);
+    clockEl.classList.toggle('day', !isNight);
+  });
+}
+
+document.getElementById('toggleFormat').addEventListener('click', (e) => {
+  use24h = !use24h;
+  e.target.textContent = use24h ? 'Switch to 12h' : 'Switch to 24h';
+  updateClocks();
+});
+
+updateClocks();
+setInterval(updateClocks, 1000);
+</script>
+</body></html>
